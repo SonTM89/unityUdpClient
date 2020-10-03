@@ -13,8 +13,9 @@ public class NetworkMan : MonoBehaviour
     void Start()
     {
         udp = new UdpClient();
-        
-        udp.Connect("PUT_IP_ADDRESS_HERE",12345);
+       
+        // Add real server IP
+        udp.Connect("3.97.25.11", 12345);
 
         Byte[] sendBytes = Encoding.ASCII.GetBytes("connect");
       
@@ -32,7 +33,8 @@ public class NetworkMan : MonoBehaviour
 
     public enum commands{
         NEW_CLIENT,
-        UPDATE
+        UPDATE,
+        DROP_CLIENT
     };
     
     [Serializable]
@@ -54,7 +56,7 @@ public class NetworkMan : MonoBehaviour
 
     [Serializable]
     public class NewPlayer{
-        
+        public Player[] player;
     }
 
     [Serializable]
@@ -62,8 +64,27 @@ public class NetworkMan : MonoBehaviour
         public Player[] players;
     }
 
+    // Add GameObjectPlayers Class
+    [Serializable]
+    public class GameObjectPlayers{
+        public Player player;
+        public GameObject cube;
+    }
+
+    // Add DropPlayer Class
+    [Serializable]
+    public class DropPlayer{
+        public Player droppedPlayer;
+    }
+
     public Message latestMessage;
     public GameState lastestGameState;
+    public NewPlayer latestPlayer;
+    public DropPlayer dropPlayer;
+
+    List<Player> connectedPlayers = new List<Player>();
+    List<GameObjectPlayers> gameObjectPlayers = new List<GameObjectPlayers>();
+
     void OnReceived(IAsyncResult result){
         // this is what had been passed into BeginReceive as the second parameter:
         UdpClient socket = result.AsyncState as UdpClient;
@@ -77,14 +98,49 @@ public class NetworkMan : MonoBehaviour
         // do what you'd like with `message` here:
         string returnData = Encoding.ASCII.GetString(message);
         Debug.Log("Got this: " + returnData);
+
+
         
         latestMessage = JsonUtility.FromJson<Message>(returnData);
-        try{
+        
+        try
+        {
             switch(latestMessage.cmd){
                 case commands.NEW_CLIENT:
+                    // Add the details of new player into a list of currently connected players
+                    latestPlayer = JsonUtility.FromJson<NewPlayer>(returnData);
+                    for(int i = 0; i < latestPlayer.player.Length; i++)
+                    {
+                        bool hasNew = true;
+                        foreach (Player p in connectedPlayers)
+                        {
+                            if (latestPlayer.player[i].id == p.id)
+                            {
+                                hasNew = false;
+                                break;
+                            }                               
+                        }
+                        if(hasNew == true)
+                        {
+                            connectedPlayers.Add(latestPlayer.player[i]);
+                        }
+
+                    }
+                    
                     break;
                 case commands.UPDATE:
                     lastestGameState = JsonUtility.FromJson<GameState>(returnData);
+                    break;
+                case commands.DROP_CLIENT:
+                    // Remove the player’s entry from the list of currently connected players
+                    dropPlayer = JsonUtility.FromJson<DropPlayer>(returnData);
+                    for(int i = 0; i < connectedPlayers.Count; i ++)
+                    {
+                        if(dropPlayer.droppedPlayer.id == connectedPlayers[i].id)
+                        {
+                            connectedPlayers.RemoveAt(i);
+                        }
+                    }
                     break;
                 default:
                     Debug.Log("Error");
@@ -100,15 +156,58 @@ public class NetworkMan : MonoBehaviour
     }
 
     void SpawnPlayers(){
-
+        // When a new player is connected, the client spawns a cube to represent the newly connected player
+        for (int i = 0; i < connectedPlayers.Count; i++)
+        {
+            bool hasNew = true;
+            foreach (GameObjectPlayers gO in gameObjectPlayers)
+            {
+                if (connectedPlayers[i].id == gO.player.id)
+                {
+                    hasNew = false;
+                    break;
+                }
+            }
+            if (hasNew == true)
+            {
+                gameObjectPlayers.Add(new GameObjectPlayers() { player = connectedPlayers[i], cube = GameObject.CreatePrimitive(PrimitiveType.Cube) });
+                gameObjectPlayers[gameObjectPlayers.Count - 1].cube.transform.position = new Vector3(-2.5f + (gameObjectPlayers.Count - 1) * 2.5f, 2.5f, 0.5f);
+            }
+        }
     }
 
     void UpdatePlayers(){
-
+        // The client loops through all the currently connected players and updates the player game object properties
+        foreach (GameObjectPlayers gO in gameObjectPlayers)
+        {
+            foreach(Player p in lastestGameState.players)
+            {
+                if (gO.player.id == p.id)
+                {
+                    gO.player.color = p.color;
+                    gO.cube.GetComponent<Renderer>().material.color = new Color(p.color.R, p.color.G, p.color.B);
+                }
+            }
+        }
     }
 
-    void DestroyPlayers(){
+    void DestroyPlayers()
+    {
 
+        // When a player is dropped, the client destroys the player’s game object
+        if (gameObjectPlayers.Count > 0)
+        {
+            for(int i = 0; i < gameObjectPlayers.Count; i++)
+            {
+                if (dropPlayer.droppedPlayer.id == gameObjectPlayers[i].player.id)
+                {
+                    Destroy(gameObjectPlayers[i].cube);
+                    gameObjectPlayers.RemoveAt(i);
+                }
+            }
+        }
+
+        Debug.Log("Test: " + gameObjectPlayers.Count);
     }
     
     void HeartBeat(){
